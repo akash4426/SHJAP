@@ -1,0 +1,628 @@
+// ============================================================
+// SHJAP Grievance Portal — Prisma Schema (PostgreSQL)
+// ============================================================
+// Notes:
+// - `User.roles` is a denormalized cache of assigned role enum
+//   values used for fast auth lookups / JWT claims. It is kept in
+//   sync with the Role / UserRoleAssignment management tables
+//   inside the same transaction whenever roles are changed.
+// - Anonymous complaints never store a student identity:
+//   `submittedById` stays null and `isAnonymous` is true.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────
+
+enum UserRole {
+  STUDENT
+  DEPARTMENT_ADMIN
+  COLLEGE_ADMIN
+  UNIVERSITY_ADMIN
+  MAIN_ADMIN
+}
+
+enum ComplaintStatus {
+  SUBMITTED
+  CATEGORIZED
+  ASSIGNED
+  UNDER_INVESTIGATION
+  INFORMATION_REQUESTED
+  ESCALATED
+  RESOLUTION_PROPOSED
+  RESOLVED
+  CLOSED
+  REJECTED
+}
+
+enum SubmissionMode {
+  ANONYMOUS
+  VERIFIED
+}
+
+enum ComplaintPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum EvidenceType {
+  IMAGE
+  PDF
+  DOCUMENT
+  OTHER
+}
+
+enum NotificationType {
+  COMPLAINT_SUBMITTED
+  COMPLAINT_ASSIGNED
+  STATUS_CHANGED
+  INFO_REQUESTED
+  ADMIN_MESSAGE
+  COMPLAINT_ESCALATED
+  COMPLAINT_RESOLVED
+  FEEDBACK_REQUESTED
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  LOGIN_FAILED
+  REGISTRATION
+  PASSWORD_RESET
+  COMPLAINT_CREATED
+  COMPLAINT_UPDATED
+  COMPLAINT_DELETED
+  EVIDENCE_UPLOADED
+  EVIDENCE_ACCESSED
+  EVIDENCE_DELETED
+  STATUS_CHANGED
+  ASSIGNMENT
+  ASSESSMENT
+  ESCALATION
+  RESOLUTION
+  FEEDBACK
+  MESSAGE_SENT
+  USER_MANAGEMENT
+  ROLE_CHANGE
+  SETTING_CHANGE
+}
+
+// ─── Users, Roles & Profiles ─────────────────────────────────
+
+model User {
+  id                  String     @id @default(uuid())
+  email               String     @unique
+  passwordHash        String
+  firstName           String
+  lastName            String
+  phone               String?
+  roles               UserRole[] // fast auth cache, synced with UserRoleAssignment
+  isActive            Boolean    @default(true)
+  isEmailVerified     Boolean    @default(false)
+  emailVerifiedAt     DateTime?
+  lastLoginAt         DateTime?
+  failedLoginAttempts Int        @default(0)
+  lockedUntil         DateTime?
+  mfaEnabled          Boolean    @default(false)
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  deletedAt           DateTime?
+
+  userRoleAssignments UserRoleAssignment[]
+  studentProfile      StudentProfile?
+  adminProfile        AdministratorProfile?
+  mfaConfiguration    MFAConfiguration?
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  submittedComplaints Complaint[]          @relation("ComplaintSubmittedBy")
+  assignedComplaints  Complaint[]          @relation("ComplaintAssignedTo")
+  uploadedEvidence    Evidence[]           @relation("EvidenceUploadedBy")
+  verifiedEvidence    Evidence[]           @relation("EvidenceVerifiedBy")
+  sentMessages        Message[]            @relation("MessageSender")
+  receivedMessages    Message[]            @relation("MessageRecipient")
+  notifications       Notification[]
+  feedback            Feedback[]
+  auditLogs           AuditLog[]
+  assignmentsCreated  ComplaintAssignment[] @relation("AssignmentActor")
+  assignmentsReceived ComplaintAssignment[] @relation("AssignmentTarget")
+  statusHistoryChanges ComplaintStatusHistory[] @relation("StatusChangedBy")
+  assessments         ComplaintAssessment[]
+  escalationsRaised   ComplaintEscalation[] @relation("EscalatedBy")
+  escalationsReceived ComplaintEscalation[] @relation("EscalatedTo")
+  escalationsReviewed ComplaintEscalation[] @relation("EscalationReviewedBy")
+  resolutionsIssued   Resolution[]
+
+  @@index([email])
+  @@index([isActive])
+  @@index([roles])
+}
+
+model Role {
+  id          String              @id @default(uuid())
+  name        UserRole            @unique
+  description String?
+  assignments UserRoleAssignment[]
+  permissions RolePermission[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+}
+
+model Permission {
+  id          String          @id @default(uuid())
+  name        String          @unique // e.g. complaint:resolve
+  description String?
+  resource    String
+  action      String
+  roleLinks   RolePermission[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([resource, action])
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserRoleAssignment {
+  id         String   @id @default(uuid())
+  userId     String
+  roleId     String
+  assignedAt DateTime @default(now())
+  assignedBy String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+}
+
+model StudentProfile {
+  id           String  @id @default(uuid())
+  userId       String  @unique
+  studentId    String  @unique
+  collegeId    String?
+  departmentId String?
+  program      String?
+  year         Int?
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  college      College?    @relation(fields: [collegeId], references: [id])
+  department   Department? @relation(fields: [departmentId], references: [id])
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([studentId])
+  @@index([collegeId])
+  @@index([departmentId])
+}
+
+model AdministratorProfile {
+  id           String  @id @default(uuid())
+  userId       String  @unique
+  employeeId   String  @unique
+  collegeId    String?
+  departmentId String?
+  designation  String?
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  college      College?    @relation(fields: [collegeId], references: [id])
+  department   Department? @relation(fields: [departmentId], references: [id])
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([employeeId])
+  @@index([collegeId])
+  @@index([departmentId])
+}
+
+// ─── Organization ────────────────────────────────────────────
+
+model College {
+  id          String   @id @default(uuid())
+  name        String
+  code        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  departments Department[]
+  students    StudentProfile[]
+  admins      AdministratorProfile[]
+
+  @@index([code])
+  @@index([isActive])
+}
+
+model Department {
+  id          String   @id @default(uuid())
+  name        String
+  code        String   @unique
+  description String?
+  collegeId   String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  college     College             @relation(fields: [collegeId], references: [id], onDelete: Cascade)
+  categories  ComplaintCategory[]
+  students    StudentProfile[]
+  admins      AdministratorProfile[]
+  complaints  Complaint[]
+
+  @@index([code])
+  @@index([collegeId])
+  @@index([isActive])
+}
+
+model ComplaintCategory {
+  id           String   @id @default(uuid())
+  name         String
+  code         String   @unique
+  description  String?
+  departmentId String
+  keywords     String[]
+  isActive     Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  complaints Complaint[]
+
+  @@index([code])
+  @@index([departmentId])
+  @@index([isActive])
+}
+
+// ─── Complaints & Workflow ───────────────────────────────────
+
+model Complaint {
+  id                String   @id @default(uuid())
+  complaintNumber   String   @unique
+  trackingId        String   @unique
+  title             String
+  description       String
+  submissionMode    SubmissionMode
+  categoryId        String?
+  departmentId      String?
+  submittedById     String?
+  status            ComplaintStatus @default(SUBMITTED)
+  priority          ComplaintPriority @default(MEDIUM)
+  assignedToId      String?
+  location          String?
+  additionalInfo    String?
+  isAnonymous       Boolean  @default(false)
+  needsManualCategorization Boolean @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  resolvedAt        DateTime?
+  closedAt          DateTime?
+  deletedAt         DateTime?
+
+  category      ComplaintCategory?       @relation(fields: [categoryId], references: [id])
+  department    Department?              @relation(fields: [departmentId], references: [id])
+  submittedBy   User?                    @relation("ComplaintSubmittedBy", fields: [submittedById], references: [id])
+  assignedTo    User?                    @relation("ComplaintAssignedTo", fields: [assignedToId], references: [id])
+  statusHistory ComplaintStatusHistory[]
+  assignments   ComplaintAssignment[]
+  assessments   ComplaintAssessment[]
+  escalations   ComplaintEscalation[]
+  resolution    Resolution?
+  evidence      Evidence[]
+  messages      Message[]
+  feedback      Feedback?
+  trustScore    TrustScore?
+  notifications Notification[]
+
+  @@index([complaintNumber])
+  @@index([trackingId])
+  @@index([status])
+  @@index([submittedById])
+  @@index([assignedToId])
+  @@index([departmentId])
+  @@index([categoryId])
+  @@index([createdAt])
+  @@index([priority])
+}
+
+model ComplaintAssignment {
+  id           String   @id @default(uuid())
+  complaintId  String
+  assignedById String
+  assignedToId String
+  assignedAt   DateTime @default(now())
+  notes        String?
+
+  complaint  Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  assignedBy User     @relation("AssignmentActor", fields: [assignedById], references: [id])
+  assignedTo User     @relation("AssignmentTarget", fields: [assignedToId], references: [id])
+
+  @@index([complaintId])
+  @@index([assignedToId])
+}
+
+model ComplaintStatusHistory {
+  id             String           @id @default(uuid())
+  complaintId    String
+  previousStatus ComplaintStatus?
+  newStatus      ComplaintStatus
+  changedById    String?
+  changedByLabel String? // e.g. "System (auto-categorization)" when no actor
+  reason         String?
+  changedAt      DateTime         @default(now())
+
+  complaint Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  changedBy User?     @relation("StatusChangedBy", fields: [changedById], references: [id])
+
+  @@index([complaintId])
+  @@index([changedAt])
+}
+
+model ComplaintAssessment {
+  id                     String   @id @default(uuid())
+  complaintId            String
+  assessedById           String
+  investigationNotes     String?
+  evidenceAssessment     String?
+  findings               String?
+  recommendedAction      String?
+  resolutionDecision     String?
+  isInformationRequested Boolean  @default(false)
+  informationRequested   String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  complaint  Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  assessedBy User     @relation(fields: [assessedById], references: [id])
+
+  @@unique([complaintId, assessedById])
+  @@index([complaintId])
+  @@index([assessedById])
+}
+
+model ComplaintEscalation {
+  id             String   @id @default(uuid())
+  complaintId    String
+  escalatedById  String
+  escalatedToId  String?
+  reason         String
+  notes          String?
+  previousLevel  String
+  newLevel       String
+  createdAt      DateTime @default(now())
+  reviewedAt     DateTime?
+  reviewedById   String?
+  reviewDecision String?
+  reviewNotes    String?
+
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  escalatedBy User     @relation("EscalatedBy", fields: [escalatedById], references: [id])
+  escalatedTo User?    @relation("EscalatedTo", fields: [escalatedToId], references: [id])
+  reviewedBy  User?    @relation("EscalationReviewedBy", fields: [reviewedById], references: [id])
+
+  @@index([complaintId])
+  @@index([escalatedById])
+  @@index([escalatedToId])
+}
+
+model Resolution {
+  id                  String   @id @default(uuid())
+  complaintId         String   @unique
+  resolvedById        String
+  summary             String
+  detailedResolution  String
+  actionTaken         String
+  resolutionDate      DateTime @default(now())
+  supportingDocuments String[]
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  complaint  Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  resolvedBy User     @relation(fields: [resolvedById], references: [id])
+
+  @@index([complaintId])
+  @@index([resolvedById])
+}
+
+model Evidence {
+  id           String       @id @default(uuid())
+  complaintId  String
+  fileName     String
+  originalName String
+  filePath     String
+  fileSize     Int
+  mimeType     String
+  type         EvidenceType
+  uploadedById String
+  description  String?
+  isVerified   Boolean      @default(false)
+  verifiedAt   DateTime?
+  verifiedById String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  complaint  Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  uploadedBy User     @relation("EvidenceUploadedBy", fields: [uploadedById], references: [id])
+  verifiedBy User?    @relation("EvidenceVerifiedBy", fields: [verifiedById], references: [id])
+
+  @@index([complaintId])
+  @@index([uploadedById])
+}
+
+// ─── Communication ───────────────────────────────────────────
+
+model Message {
+  id          String   @id @default(uuid())
+  complaintId String
+  senderId    String
+  recipientId String
+  message     String
+  isRead      Boolean  @default(false)
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  complaint Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  sender    User      @relation("MessageSender", fields: [senderId], references: [id])
+  recipient User      @relation("MessageRecipient", fields: [recipientId], references: [id])
+
+  @@index([complaintId])
+  @@index([senderId])
+  @@index([recipientId])
+  @@index([isRead])
+}
+
+model Notification {
+  id                 String           @id @default(uuid())
+  userId             String
+  type               NotificationType
+  title              String
+  message            String
+  relatedComplaintId String?
+  isRead             Boolean          @default(false)
+  readAt             DateTime?
+  createdAt          DateTime         @default(now())
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  complaint Complaint? @relation(fields: [relatedComplaintId], references: [id])
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+// ─── Feedback & Trust Score ─────────────────────────────────
+
+model Feedback {
+  id          String   @id @default(uuid())
+  complaintId String   @unique
+  studentId   String?
+  rating      Int
+  comment     String?
+  isAnonymous Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  complaint Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  student   User?     @relation(fields: [studentId], references: [id])
+
+  @@index([complaintId])
+  @@index([studentId])
+}
+
+model TrustScore {
+  id                  String   @id @default(uuid())
+  complaintId         String   @unique
+  score               Int?
+  status              String   @default("PENDING") // PENDING | LOW | MEDIUM | HIGH
+  evidenceIntegrity   Int?
+  evidenceCompleteness Int?
+  historyConsistency  Int?
+  processTransparency Int?
+  factors             Json
+  calculatedAt        DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  complaint Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+
+  @@index([complaintId])
+  @@index([status])
+}
+
+// ─── Audit & Security ────────────────────────────────────────
+
+model AuditLog {
+  id            String      @id @default(uuid())
+  sequence      BigInt      @unique @default(autoincrement())
+  actorId       String?
+  actorRole     UserRole?
+  action        AuditAction
+  entityType    String
+  entityId      String
+  previousValue Json?
+  newValue      Json?
+  payload       String      // canonical event string that was hashed (verifiable byte-exactly)
+  ipAddress     String?
+  userAgent     String?
+  hash          String
+  previousHash  String?
+  createdAt     DateTime    @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([sequence])
+  @@index([actorId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model SystemSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       Json
+  description String?
+  isPublic    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model MFAConfiguration {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  secret      String
+  backupCodes String[]
+  isEnabled   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique // SHA-256 of the raw token; raw token never stored
+  expiresAt DateTime
+  isRevoked Boolean  @default(false)
+  createdAt DateTime @default(now())
+  userAgent String?
+  ipAddress String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  token     String    @unique // stored hashed in practice via createResetToken
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}

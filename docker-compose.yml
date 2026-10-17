@@ -1,0 +1,81 @@
+# SHJAP Grievance Portal — full local/production stack
+#
+#   docker compose up -d --build            # start everything
+#   docker compose run --rm api npx prisma db push --schema /prisma/schema.prisma
+#   docker compose run --rm api npx tsx /prisma/seed.ts    # demo data incl. role accounts
+#
+# The api+web run in containers; Postgres runs in its own container with a
+# named volume. Evidence storage defaults to the local driver backed by a
+# named volume; MinIO (S3-compatible) is available but optional.
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shjap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shjap-secret-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-shjap_grievance}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shjap} -d ${POSTGRES_DB:-shjap_grievance}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Override any setting via backend/.env or shell environment
+      DATABASE_URL: postgresql://${POSTGRES_USER:-shjap}:${POSTGRES_PASSWORD:-shjap-secret-change-me}@db:5432/${POSTGRES_DB:-shjap_grievance}?schema=public
+      NODE_ENV: production
+      PORT: 3001
+      HOST: 0.0.0.0
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (min 32 chars)}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      EVIDENCE_LOCAL_DIR: /storage/evidence
+    env_file:
+      - backend/.env
+    volumes:
+      - evidence:/storage/evidence
+    ports:
+      - "3001:3001"
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
+  # Optional S3-compatible evidence storage (Storj-compatible MinIO):
+  #   STORAGE_DRIVER=s3  S3_ENDPOINT=http://minio:9000
+  #   S3_ACCESS_KEY / S3_SECRET_KEY / S3_BUCKET=shjap-evidence
+  # minio:
+  #   image: minio/minio:latest
+  #   command: server /data --console-address ":9001"
+  #   environment:
+  #     MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+  #     MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+  #   volumes:
+  #     - minio:/data
+  #   ports:
+  #     - "9000:9000"
+  #     - "9001:9001"
+
+volumes:
+  pgdata:
+  evidence:
+  # minio:

@@ -1,0 +1,56 @@
+{
+  "name": "shjap-grievance-portal-backend",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:generate": "prisma generate --schema ../prisma/schema.prisma",
+    "db:push": "prisma db push --schema ../prisma/schema.prisma --skip-generate",
+    "db:migrate": "prisma migrate dev --schema ../prisma/schema.prisma",
+    "db:seed": "tsx ../prisma/seed.ts",
+    "db:setup": "tsx scripts/db-prepare.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e:prepare": "tsx scripts/e2e-prepare.ts",
+    "e2e": "cd .. && npx playwright test --config tests/e2e/playwright.config.ts",
+    "lint": "eslint src --ext .ts",
+    "db:deploy": "prisma migrate deploy --schema ../prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.10.0",
+    "@fastify/cors": "^9.0.1",
+    "@fastify/cookie": "^9.3.1",
+    "@fastify/helmet": "^11.1.1",
+    "@fastify/jwt": "^8.0.0",
+    "@fastify/multipart": "^8.2.0",
+    "@fastify/rate-limit": "^9.1.0",
+    "argon2": "^0.31.2",
+    "fastify": "^4.26.0",
+    "zod": "^3.22.4",
+    "speakeasy": "^2.0.0",
+    "qrcode": "^1.5.3",
+    "pino": "^8.19.0",
+    "pino-pretty": "^10.3.1",
+    "dotenv": "^16.4.5",
+    "@aws-sdk/client-s3": "^3.535.0",
+    "@aws-sdk/s3-request-presigner": "^3.535.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.20",
+    "@types/speakeasy": "^2.0.10",
+    "@types/qrcode": "^1.5.5",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.1",
+    "vitest": "^1.3.1",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/eslint-plugin": "^7.1.0",
+    "@typescript-eslint/parser": "^7.1.0",
+    "prisma": "^5.10.0"
+  },
+  "prisma": {
+    "schema": "../prisma/schema.prisma"
+  }
+}
