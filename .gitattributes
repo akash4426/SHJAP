@@ -1,0 +1,11 @@
+# Normalize line endings: LF everywhere that matters, keep CRLF where required.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.pdf binary
+*.ico binary
+*.woff binary
+*.woff2 binary
