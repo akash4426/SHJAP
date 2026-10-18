@@ -104,13 +104,14 @@ export type StorageDriver = 'local' | 's3' | 'supabase';
 
 /**
  * Resolve the active storage driver.
- * - `supabase` requires SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
+ * - `supabase` requires SUPABASE_URL + a secret key (SUPABASE_SECRET_KEY or
+ *   legacy SUPABASE_SERVICE_ROLE_KEY)
  * - `s3`       requires (at least) S3_BUCKET
  * - anything else falls back to the private local directory
  */
 export function getStorageDriver(): StorageDriver {
   const { driver } = config.upload;
-  if (driver === 'supabase' && config.supabase.url && config.supabase.serviceRoleKey) {
+  if (driver === 'supabase' && config.supabase.url && config.supabase.secretKey) {
     return 'supabase';
   }
   if (driver === 's3' && !!config.s3.bucket) return 's3';
@@ -143,7 +144,7 @@ function getS3Client(): S3Client {
 
 function getSupabaseClient(): SupabaseClient {
   if (!supabaseClient) {
-    supabaseClient = createClient(config.supabase.url, config.supabase.serviceRoleKey, {
+    supabaseClient = createClient(config.supabase.url, config.supabase.secretKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
   }

@@ -4,7 +4,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  * Storage driver resolution tests.
  *
  * The storage service picks its driver from configuration at call time:
- *   supabase  → STORAGE_DRIVER=supabase + SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
+ *   supabase  → STORAGE_DRIVER=supabase + SUPABASE_URL + a secret key
+ *               (new-style SUPABASE_SECRET_KEY, or legacy SUPABASE_SERVICE_ROLE_KEY)
  *   s3        → STORAGE_DRIVER=s3
  *   local     → everything else (default, and graceful fallback when a
  *               Supabase driver is requested without credentials)
@@ -13,7 +14,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const ENV_KEYS = [
   'STORAGE_DRIVER',
   'SUPABASE_URL',
+  'SUPABASE_SECRET_KEY',
   'SUPABASE_SERVICE_ROLE_KEY',
+  'SUPABASE_PUBLISHABLE_KEY',
+  'SUPABASE_ANON_KEY',
   'S3_BUCKET',
 ] as const;
 
@@ -22,7 +26,9 @@ const saved: Record<string, string | undefined> = {};
 beforeEach(() => {
   for (const key of ENV_KEYS) {
     saved[key] = process.env[key];
-    delete process.env[key];
+    // Block dotenv (which must not override already-present keys) from
+    // re-injecting values from backend/.env during dynamic imports.
+    process.env[key] = '';
   }
   vi.resetModules();
 });
@@ -47,11 +53,21 @@ describe('storage driver resolution', () => {
     expect(usesRemoteStorage()).toBe(false);
   });
 
-  it('selects supabase when URL + service-role key are present', async () => {
+  it('selects supabase with the new-style secret key', async () => {
     const { getStorageDriver, usesRemoteStorage } = await loadStorage({
       STORAGE_DRIVER: 'supabase',
       SUPABASE_URL: 'https://example.supabase.co',
-      SUPABASE_SERVICE_ROLE_KEY: 'service-role-test-key',
+      SUPABASE_SECRET_KEY: 'sb_secret_test',
+    });
+    expect(getStorageDriver()).toBe('supabase');
+    expect(usesRemoteStorage()).toBe(true);
+  });
+
+  it('selects supabase with the legacy service-role key', async () => {
+    const { getStorageDriver, usesRemoteStorage } = await loadStorage({
+      STORAGE_DRIVER: 'supabase',
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'legacy-service-role-test-key',
     });
     expect(getStorageDriver()).toBe('supabase');
     expect(usesRemoteStorage()).toBe(true);
@@ -61,6 +77,7 @@ describe('storage driver resolution', () => {
     const { getStorageDriver, usesRemoteStorage } = await loadStorage({
       STORAGE_DRIVER: 'supabase',
       SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test', // publishable alone is not enough
     });
     expect(getStorageDriver()).toBe('local');
     expect(usesRemoteStorage()).toBe(false);

@@ -35,12 +35,15 @@ export const config = {
     publicUrl: process.env.S3_PUBLIC_URL || '',
   },
 
-  // Supabase (Storage via service-role API key; Postgres via DATABASE_URL)
-  // Server-side only — the service role key must never reach the frontend.
+  // Supabase (Storage via secret key; Postgres via DATABASE_URL)
+  // New-style keys (sb_publishable_…/sb_secret_…) or legacy JWT keys are accepted.
+  // Server-side only — the secret key must never reach the frontend.
   supabase: {
     url: process.env.SUPABASE_URL || '',
-    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+    publishableKey: process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || '',
+    secretKey: process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '',
     storageBucket: process.env.SUPABASE_STORAGE_BUCKET || 'shjap-evidence',
+    jwksUrl: process.env.SUPABASE_JWKS_URL || '',
   },
 
   // Email (SMTP) — notification service is email-ready

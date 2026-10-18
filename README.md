@@ -17,8 +17,9 @@ analytics, and a tamper-evident append-only audit log.
 | Delivery   | Dockerfile per app, docker-compose (Postgres + nginx SPA + API) |
 
 > **Supabase:** point `DATABASE_URL` at your Supabase Postgres and set
-> `STORAGE_DRIVER="supabase"` + `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
-> (bucket auto-created). Full guide: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §8.
+> `STORAGE_DRIVER="supabase"` + `SUPABASE_URL` + `SUPABASE_SECRET_KEY`
+> (or legacy `SUPABASE_SERVICE_ROLE_KEY`; bucket auto-created). Full guide:
+> [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §8.
 
 ---
 

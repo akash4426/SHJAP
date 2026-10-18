@@ -107,8 +107,8 @@ audit writes through one dedicated instance or a DB-level advisory lock.
 
 The portal runs on Supabase with **zero code changes** — Prisma talks to
 Supabase Postgres via `DATABASE_URL`, and evidence storage has two
-Supabase-backed drivers built in: the native Storage API via the
-**service-role key** (`STORAGE_DRIVER=supabase`) or the Storage **S3 protocol**
+Supabase-backed drivers built in: the native Storage API via a
+**secret key** (`STORAGE_DRIVER=supabase`) or the Storage **S3 protocol**
 (`STORAGE_DRIVER=s3`). A plain local directory remains the default for
 offline development.
 
@@ -134,12 +134,14 @@ offline development.
 
 3. **Storage** — *Project Settings → API* gives you the URL and keys:
 
-   **Option A (recommended): service-role API key**
+   **Option A (recommended): secret key** — *Project Settings → API Keys*
+   (new-style `sb_secret_…`, or the legacy `service_role` JWT on the same page):
 
    ```bash
    STORAGE_DRIVER="supabase"
    SUPABASE_URL="https://PROJECT_REF.supabase.co"
-   SUPABASE_SERVICE_ROLE_KEY="..."          # service_role — server-side only!
+   SUPABASE_SECRET_KEY="sb_secret_..."       # server-side only — never expose
+   # Legacy fallbacks also accepted: SUPABASE_SERVICE_ROLE_KEY / SUPABASE_ANON_KEY
    SUPABASE_STORAGE_BUCKET="shjap-evidence" # auto-created (private) on first upload
    ```
 
