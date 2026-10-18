@@ -16,6 +16,15 @@ export const phoneSchema = z
   .string()
   .regex(/^\+?[\d\s\-().]{7,20}$/, 'Invalid phone number');
 
+/**
+ * Optional phone fields: an empty string (untouched/cleared form field) means
+ * "not provided" and must not fail validation. Transforms '' -> undefined.
+ */
+export const optionalPhoneSchema = z
+  .union([phoneSchema, z.literal('')])
+  .optional()
+  .transform((value) => (value === '' || value === undefined ? undefined : value));
+
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
 export const registerSchema = z.object({
@@ -23,7 +32,7 @@ export const registerSchema = z.object({
   password: passwordSchema,
   firstName: z.string().min(1, 'First name is required').max(50),
   lastName: z.string().min(1, 'Last name is required').max(50),
-  phone: phoneSchema.optional(),
+  phone: optionalPhoneSchema,
   studentId: z.string().min(1, 'Student ID is required').max(20),
   collegeId: z.string().uuid().optional(),
   departmentId: z.string().uuid().optional(),
@@ -162,7 +171,7 @@ export const createUserSchema = z.object({
   password: passwordSchema,
   firstName: z.string().min(1).max(50),
   lastName: z.string().min(1).max(50),
-  phone: phoneSchema.optional(),
+  phone: optionalPhoneSchema,
   roles: z.array(z.nativeEnum(UserRole)).min(1, 'At least one role is required'),
   studentId: z.string().max(20).optional(),
   collegeId: z.string().uuid().optional(),
@@ -176,7 +185,7 @@ export const createUserSchema = z.object({
 export const updateUserSchema = z.object({
   firstName: z.string().min(1).max(50).optional(),
   lastName: z.string().min(1).max(50).optional(),
-  phone: phoneSchema.optional(),
+  phone: optionalPhoneSchema,
   isActive: z.boolean().optional(),
 });
 

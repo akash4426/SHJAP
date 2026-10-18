@@ -15,3 +15,14 @@ export const passwordSchema = z
   .regex(/[^A-Za-z0-9]/, 'Password must contain a special character');
 
 export const PASSWORD_HINT = 'Min. 8 characters with upper & lower case, a number and a symbol';
+
+/**
+ * Frontend mirror of the backend phone policy
+ * (backend/src/validators/schemas.ts → phoneSchema). An empty string is
+ * allowed (field left blank) and treated as "not provided" server-side.
+ */
+export const phoneSchema = z
+  .string()
+  .regex(/^\+?[\d\s\-().]{7,20}$/, 'Invalid phone number')
+  .optional()
+  .or(z.literal(''));

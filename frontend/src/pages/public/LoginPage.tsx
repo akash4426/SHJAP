@@ -51,14 +51,16 @@ export function LoginPage() {
           <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>Access the SHJAP Grievance Portal</p>
         </div>
 
-        {/* Demo credentials hint */}
-        <div className="alert alert-info" style={{ marginBottom: '1.5rem', fontSize: '0.8rem' }}>
-          <span>💡</span>
-          <div>
-            <strong>Demo:</strong> student@example.com / Student@123<br />
-            or: department.admin@example.com / Admin@123
+        {/* Demo credentials hint — development only; keep in sync with prisma/seed.ts */}
+        {import.meta.env.DEV && (
+          <div className="alert alert-info" style={{ marginBottom: '1.5rem', fontSize: '0.8rem' }}>
+            <span>💡</span>
+            <div>
+              <strong>Demo:</strong> student@example.com / Password@123<br />
+              or: department.admin@example.com / Password@123
+            </div>
           </div>
-        </div>
+        )}
 
         <form onSubmit={handleSubmit(onSubmit)} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div className="form-group">

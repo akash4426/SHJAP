@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   passwordSchema,
   phoneSchema,
+  optionalPhoneSchema,
   registerSchema,
   loginSchema,
   createComplaintSchema,
@@ -46,6 +47,24 @@ describe('validators (unit)', () => {
 
     it('rejects letters', () => {
       expect(phoneSchema.safeParse('not-a-phone').success).toBe(false);
+    });
+  });
+
+  describe('optionalPhoneSchema', () => {
+    it('treats an empty string (untouched form field) as not provided', () => {
+      expect(optionalPhoneSchema.parse('')).toBeUndefined();
+    });
+
+    it('treats undefined as not provided', () => {
+      expect(optionalPhoneSchema.parse(undefined)).toBeUndefined();
+    });
+
+    it('passes valid numbers through', () => {
+      expect(optionalPhoneSchema.parse('+254700123456')).toBe('+254700123456');
+    });
+
+    it('still rejects invalid values', () => {
+      expect(optionalPhoneSchema.safeParse('abcd').success).toBe(false);
     });
   });
 

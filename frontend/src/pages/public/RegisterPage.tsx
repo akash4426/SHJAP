@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../../contexts/AuthContext';
 import { Shield, Eye, EyeOff, ArrowRight, ChevronLeft } from 'lucide-react';
 import { Spinner } from '../../components/shared';
-import { passwordSchema, PASSWORD_HINT } from '../../utils/validation';
+import { passwordSchema, phoneSchema, PASSWORD_HINT } from '../../utils/validation';
 
 const schema = z.object({
   firstName: z.string().min(1, 'First name required').max(50),
@@ -16,7 +16,7 @@ const schema = z.object({
   studentId: z.string().min(1, 'Student ID required').max(20),
   program: z.string().optional(),
   year: z.number().int().min(1).max(10).optional(),
-  phone: z.string().optional(),
+  phone: phoneSchema,
   password: passwordSchema,
   confirmPassword: z.string(),
 }).refine((d) => d.password === d.confirmPassword, {
@@ -46,12 +46,15 @@ export function RegisterPage() {
     setLoading(true);
     try {
       // Only send fields the backend registerSchema accepts. confirmPassword is
-      // a form-only field and must not travel to the API.
-      const { confirmPassword: _confirm, ...payload } = data;
-      await registerUser({
-        ...payload,
-        year: data.year ? Number(data.year) : undefined,
-      });
+      // a form-only field, and empty optional fields ('' / undefined) must be
+      // omitted entirely so they don't fail server-side validation.
+      const { confirmPassword: _confirm, year, ...rest } = data;
+      const payload = Object.fromEntries(
+        Object.entries({ ...rest, year: year ? Number(year) : undefined }).filter(
+          ([, value]) => value !== '' && value !== undefined && value !== null
+        )
+      );
+      await registerUser(payload);
       navigate('/student/dashboard');
       toast.success('Account created! Welcome to SHJAP Grievance Portal.');
     } catch (err: any) {
