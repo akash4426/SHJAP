@@ -10,10 +10,15 @@ analytics, and a tamper-evident append-only audit log.
 |------------|-------|
 | Frontend   | React 18 + TypeScript, Vite, React Router, TanStack Query, React Hook Form, custom design system |
 | Backend    | Node 20, Fastify, Zod, @fastify/jwt (access/refresh/MFA), Argon2id |
-| Database   | PostgreSQL + Prisma (dev workflow: `prisma db push`; production: migrations) |
+| Database   | PostgreSQL + Prisma (dev workflow: `prisma db push`; production: migrations) — runs on any Postgres incl. **Supabase** |
+| Storage    | Private local directory (default), **Supabase Storage** (service-role key or S3 protocol), or any S3-compatible store |
 | E2E tests  | Playwright (Chromium) |
 | Unit/integration | Vitest + Fastify `inject()` on a dedicated test database |
 | Delivery   | Dockerfile per app, docker-compose (Postgres + nginx SPA + API) |
+
+> **Supabase:** point `DATABASE_URL` at your Supabase Postgres and set
+> `STORAGE_DRIVER="supabase"` + `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
+> (bucket auto-created). Full guide: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §8.
 
 ---
 

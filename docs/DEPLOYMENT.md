@@ -102,3 +102,95 @@ store (e.g. `@fastify/rate-limit` Redis backend) or enforce limits at the gatewa
 The audit chain serializes writers in-process — single-container deployments
 maintain exact linking automatically; multi-instance deployments should route
 audit writes through one dedicated instance or a DB-level advisory lock.
+
+## 8. Supabase (Postgres + Storage)
+
+The portal runs on Supabase with **zero code changes** — Prisma talks to
+Supabase Postgres via `DATABASE_URL`, and evidence storage has two
+Supabase-backed drivers built in: the native Storage API via the
+**service-role key** (`STORAGE_DRIVER=supabase`) or the Storage **S3 protocol**
+(`STORAGE_DRIVER=s3`). A plain local directory remains the default for
+offline development.
+
+> Supabase **Auth** is intentionally not used: the platform ships its own
+> Argon2id + JWT access/refresh-rotation + TOTP-MFA authentication with
+> per-account lockout (see `backend/src/services/auth.service.ts`), which the
+> project spec requires. Supabase provides the database and the object storage.
+
+### 8.1 Supabase Cloud
+
+1. Create a project at [database.new](https://database.new).
+2. **Database** — copy the connection string from *Project Settings → Database*:
+
+   | Use case | Connection string |
+   |---|---|
+   | Long-running API (recommended) | `postgresql://postgres:PASSWORD@db.PROJECT_REF.supabase.co:5432/postgres?sslmode=require` |
+   | Supavisor session pooler | `postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require` |
+   | Supavisor transaction pooler (serverless only) | same host, port `6543`, add `?pgbouncer=true&connection_limit=1` |
+
+   ```bash
+   DATABASE_URL="postgresql://postgres:...@db.PROJECT_REF.supabase.co:5432/postgres?sslmode=require"
+   ```
+
+3. **Storage** — *Project Settings → API* gives you the URL and keys:
+
+   **Option A (recommended): service-role API key**
+
+   ```bash
+   STORAGE_DRIVER="supabase"
+   SUPABASE_URL="https://PROJECT_REF.supabase.co"
+   SUPABASE_SERVICE_ROLE_KEY="..."          # service_role — server-side only!
+   SUPABASE_STORAGE_BUCKET="shjap-evidence" # auto-created (private) on first upload
+   ```
+
+   **Option B: Storage S3 protocol** (create a **private** bucket named
+   `shjap-evidence` and keys under *Project Settings → Storage → S3 access keys*):
+
+   ```bash
+   STORAGE_DRIVER="s3"
+   S3_ENDPOINT="https://PROJECT_REF.supabase.co/storage/v1/s3"
+   S3_REGION="<your project region, e.g. us-east-1>"    # Project Settings → General
+   S3_ACCESS_KEY="..."
+   S3_SECRET_KEY="..."
+   S3_BUCKET="shjap-evidence"
+   ```
+
+4. Prepare the schema (from `backend/`): `npm run db:push && npm run db:seed`
+   (or `npm run db:setup`), then deploy as usual (Docker or bare metal).
+
+Notes:
+- Evidence objects stay private; downloads are streamed by the API after
+  authorization (presigned URLs are minted per request, TTL 15 min).
+- Prisma does not use RLS; authorization is enforced in the API layer. The
+  connection uses the `postgres` role via the string above — keep it out of
+  client bundles (it never leaves the backend).
+- For Supabase backups use Dashboard → Database → Backups; evidence lives in
+  the storage bucket (enable bucket backups/replication as needed).
+
+### 8.2 Local Supabase stack (parity for development/CI)
+
+The repo ships `supabase/config.toml` (S3 protocol enabled; `shjap-evidence`
+bucket auto-created; Prisma remains the schema source of truth):
+
+```bash
+npx supabase start        # requires Docker; first run pulls images
+npx supabase status       # prints DB URL, S3 access key/secret, API URL
+```
+
+Then point the backend at it:
+
+```bash
+DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+STORAGE_DRIVER="s3"
+S3_ENDPOINT="http://127.0.0.1:54321/storage/v1/s3"
+S3_REGION="us-east-1"
+S3_ACCESS_KEY="<from supabase status>"
+S3_SECRET_KEY="<from supabase status>"
+S3_BUCKET="shjap-evidence"
+```
+
+```bash
+cd backend && npm run db:setup    # push Prisma schema + seed demo data
+npm run dev                       # app now runs on the local Supabase stack
+npx supabase stop                 # when done (add --no-backup to wipe local data)
+```
