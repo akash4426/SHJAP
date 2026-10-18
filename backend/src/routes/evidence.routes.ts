@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyReply } from 'fastify';
 import { prisma } from '../config/database.js';
 import { authenticate, getAuthUser, requireRole } from '../middleware/auth.middleware.js';
 import { requireComplaintAccess, getComplaint } from '../middleware/complaint-access.middleware.js';
-import { uploadFile, downloadFile, getDownloadUrl, deleteFile, scanFileContent, isS3Enabled } from '../services/storage.js';
+import { uploadFile, downloadFile, getDownloadUrl, deleteFile, scanFileContent, usesRemoteStorage } from '../services/storage.js';
 import { AuditService } from '../services/audit.service.js';
 import { TrustScoreService } from '../services/trust-score.service.js';
 import { successResponse } from '../utils/response.js';
@@ -200,7 +200,7 @@ export async function evidenceRoutes(app: FastifyInstance) {
       ipAddress: request.ip,
     });
 
-    if (isS3Enabled()) {
+    if (usesRemoteStorage()) {
       const url = await getDownloadUrl(evidence.filePath, 900);
       if (!url) throw new NotFoundError('File unavailable');
       return reply.send(successResponse({ downloadUrl: url, expiresIn: 900 }));

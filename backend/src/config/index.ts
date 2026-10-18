@@ -35,6 +35,14 @@ export const config = {
     publicUrl: process.env.S3_PUBLIC_URL || '',
   },
 
+  // Supabase (Storage via service-role API key; Postgres via DATABASE_URL)
+  // Server-side only — the service role key must never reach the frontend.
+  supabase: {
+    url: process.env.SUPABASE_URL || '',
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+    storageBucket: process.env.SUPABASE_STORAGE_BUCKET || 'shjap-evidence',
+  },
+
   // Email (SMTP) — notification service is email-ready
   email: {
     host: process.env.SMTP_HOST || '',
@@ -56,7 +64,7 @@ export const config = {
 
   // File Upload
   upload: {
-    driver: (process.env.STORAGE_DRIVER || 'local') as 'local' | 's3',
+    driver: (process.env.STORAGE_DRIVER || 'local') as 'local' | 's3' | 'supabase',
     localStorageDir: process.env.EVIDENCE_LOCAL_DIR || '../storage/evidence',
     malwareScanUrl: process.env.MALWARE_SCAN_URL || '',
     maxFileSize: parseInt(process.env.MAX_FILE_SIZE || '10485760', 10), // 10MB

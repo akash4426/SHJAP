@@ -1,5 +1,6 @@
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { config } from '../config/index.js';
@@ -91,7 +92,7 @@ export async function scanFileContent(buffer: Buffer, claimedMime: string): Prom
   return { safe: true, detectedMime };
 }
 
-// ─── Storage drivers (local private directory | S3-compatible) ───────────────
+// ─── Storage drivers (local private directory | S3-compatible | Supabase) ────
 
 export interface UploadResult {
   filePath: string;
@@ -99,7 +100,31 @@ export interface UploadResult {
   url?: string;
 }
 
+export type StorageDriver = 'local' | 's3' | 'supabase';
+
+/**
+ * Resolve the active storage driver.
+ * - `supabase` requires SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
+ * - `s3`       requires (at least) S3_BUCKET
+ * - anything else falls back to the private local directory
+ */
+export function getStorageDriver(): StorageDriver {
+  const { driver } = config.upload;
+  if (driver === 'supabase' && config.supabase.url && config.supabase.serviceRoleKey) {
+    return 'supabase';
+  }
+  if (driver === 's3' && !!config.s3.bucket) return 's3';
+  return 'local';
+}
+
+/** True when files live off-server (presigned URL downloads instead of streaming) */
+export function usesRemoteStorage(): boolean {
+  return getStorageDriver() !== 'local';
+}
+
 let s3Client: S3Client | null = null;
+let supabaseClient: SupabaseClient | null = null;
+let supabaseBucketChecked = false;
 
 function getS3Client(): S3Client {
   if (!s3Client) {
@@ -110,10 +135,35 @@ function getS3Client(): S3Client {
         accessKeyId: config.s3.accessKey,
         secretAccessKey: config.s3.secretKey,
       },
-      forcePathStyle: true, // MinIO and other S3-compatible services
+      forcePathStyle: true, // MinIO, Supabase Storage and other S3-compatible services
     });
   }
   return s3Client;
+}
+
+function getSupabaseClient(): SupabaseClient {
+  if (!supabaseClient) {
+    supabaseClient = createClient(config.supabase.url, config.supabase.serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
+  return supabaseClient;
+}
+
+/** Create the evidence bucket on first use (private); cached afterwards. */
+async function ensureSupabaseBucket(): Promise<void> {
+  if (supabaseBucketChecked) return;
+  const client = getSupabaseClient();
+  const bucket = config.supabase.storageBucket;
+  const { error: getError } = await client.storage.getBucket(bucket);
+  if (getError) {
+    const { error } = await client.storage.createBucket(bucket, { public: false });
+    if (error && !/already exists/i.test(error.message)) {
+      throw new Error(`Supabase Storage: cannot create bucket "${bucket}": ${error.message}`);
+    }
+    storageLogger.info({ bucket }, 'Supabase Storage bucket created');
+  }
+  supabaseBucketChecked = true;
 }
 
 /** Resolve the absolute local path guarding against path traversal */
@@ -126,10 +176,6 @@ function localPathFor(filePath: string): string {
   return full;
 }
 
-export function isS3Enabled(): boolean {
-  return config.upload.driver === 's3' && !!config.s3.bucket;
-}
-
 /** Upload a file to the configured private storage */
 export async function uploadFile(
   file: Buffer,
@@ -138,8 +184,21 @@ export async function uploadFile(
   complaintId: string
 ): Promise<UploadResult> {
   const filePath = generateEvidencePath(complaintId, fileName);
+  const driver = getStorageDriver();
 
-  if (isS3Enabled()) {
+  if (driver === 'supabase') {
+    await ensureSupabaseBucket();
+    const client = getSupabaseClient();
+    const bucket = config.supabase.storageBucket;
+    const { error } = await client.storage
+      .from(bucket)
+      .upload(filePath, file, { contentType: mimeType, upsert: false });
+    if (error) throw new Error(`Supabase Storage upload failed: ${error.message}`);
+    storageLogger.info({ filePath, complaintId, bucket }, 'Evidence uploaded to Supabase Storage');
+    return { filePath, fileName };
+  }
+
+  if (driver === 's3') {
     const client = getS3Client();
     await client.send(new PutObjectCommand({
       Bucket: config.s3.bucket,
@@ -160,38 +219,84 @@ export async function uploadFile(
 }
 
 /**
- * Download a file buffer (local driver). For S3, use getDownloadUrl instead.
- * Only the authenticated evidence endpoint calls this — files are never publicly reachable.
+ * Download a file buffer. Remote drivers also support presigned URLs via
+ * `getDownloadUrl`; only the authenticated evidence endpoint calls this —
+ * files are never publicly reachable.
  */
 export async function downloadFile(filePath: string): Promise<Buffer> {
-  if (isS3Enabled()) {
+  const driver = getStorageDriver();
+
+  if (driver === 'supabase') {
+    const client = getSupabaseClient();
+    const { data, error } = await client.storage.from(config.supabase.storageBucket).download(filePath);
+    if (error || !data) {
+      throw new Error(`Supabase Storage download failed: ${error?.message ?? 'file unavailable'}`);
+    }
+    return Buffer.from(await data.arrayBuffer());
+  }
+
+  if (driver === 's3') {
     const client = getS3Client();
     const response = await client.send(new GetObjectCommand({ Bucket: config.s3.bucket, Key: filePath }));
     const bytes = await response.Body?.transformToByteArray();
     return Buffer.from(bytes ?? []);
   }
+
   return fs.readFile(localPathFor(filePath));
 }
 
-/** Presigned URL for S3 driver; for local driver the caller streams bytes instead */
+/** Presigned/signed URL for remote drivers; null for local (caller streams bytes) */
 export async function getDownloadUrl(filePath: string, expiresIn: number = 900): Promise<string | null> {
-  if (!isS3Enabled()) return null;
+  const driver = getStorageDriver();
+
+  if (driver === 'supabase') {
+    const client = getSupabaseClient();
+    const { data, error } = await client.storage
+      .from(config.supabase.storageBucket)
+      .createSignedUrl(filePath, expiresIn);
+    if (error || !data?.signedUrl) return null;
+    return data.signedUrl;
+  }
+
+  if (driver !== 's3') return null;
+
   const client = getS3Client();
   const command = new GetObjectCommand({ Bucket: config.s3.bucket, Key: filePath });
   return getSignedUrl(client, command, { expiresIn });
 }
 
 export async function deleteFile(filePath: string): Promise<void> {
-  if (isS3Enabled()) {
+  const driver = getStorageDriver();
+
+  if (driver === 'supabase') {
+    const client = getSupabaseClient();
+    await client.storage.from(config.supabase.storageBucket).remove([filePath]);
+    return;
+  }
+
+  if (driver === 's3') {
     const client = getS3Client();
     await client.send(new DeleteObjectCommand({ Bucket: config.s3.bucket, Key: filePath }));
     return;
   }
+
   await fs.unlink(localPathFor(filePath)).catch(() => undefined);
 }
 
 export async function fileExists(filePath: string): Promise<boolean> {
-  if (isS3Enabled()) {
+  const driver = getStorageDriver();
+
+  if (driver === 'supabase') {
+    const client = getSupabaseClient();
+    const dir = path.posix.dirname(filePath);
+    const base = path.posix.basename(filePath);
+    const { data, error } = await client.storage
+      .from(config.supabase.storageBucket)
+      .list(dir, { search: base, limit: 100 });
+    return !error && (data ?? []).some((file) => file.name === base);
+  }
+
+  if (driver === 's3') {
     try {
       const client = getS3Client();
       await client.send(new HeadObjectCommand({ Bucket: config.s3.bucket, Key: filePath }));
@@ -200,6 +305,7 @@ export async function fileExists(filePath: string): Promise<boolean> {
       return false;
     }
   }
+
   try {
     await fs.access(localPathFor(filePath));
     return true;
