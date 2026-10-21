@@ -20,6 +20,11 @@ run, backend + frontend typecheck clean, CI on every push.
 > and **[2. SRS](#2-software-requirements-specification-srs)** — modules,
 > cohesion & coupling, requirements, sprint plan and traceability.
 
+| Section | Questions it answers |
+|---|---|
+| **[1. Architecture](#1-architecture)** | What are the runtime pieces? Which technologies/versions are used? How is each one integrated? Where does each directory and domain concept live? How is it configured and operated? |
+| **[2. SRS](#2-software-requirements-specification-srs)** | Who are the actors? What are the functional/non-functional requirements? How are modules decomposed? How cohesive/coupled are they? How were sprints divided? How is every requirement traced to code and tests? |
+
 ---
 
 ## 1. Architecture
@@ -56,7 +61,7 @@ flowchart LR
 
 ### 1.2 Technology inventory and integration map
 
-### Frontend
+#### Frontend
 
 | Technology | Version | Role | How it is integrated |
 |---|---|---|---|
@@ -73,7 +78,7 @@ flowchart LR
 | **lucide-react** | 0.363 | Icon set | used across layouts and pages |
 | **Custom CSS design system** | — | Styling | `index.css` design tokens (colors, radii, shadows, spacing) + utility classes (`form-input`, `alert`, `step-indicator`, …); no UI framework dependency; PostCSS/autoprefixer pipeline |
 
-### Backend
+#### Backend
 
 | Technology | Version | Role | How it is integrated |
 |---|---|---|---|
@@ -95,7 +100,7 @@ flowchart LR
 | **@supabase/supabase-js** | 2.118 | Supabase Storage driver | created lazily with `SUPABASE_URL` + `SUPABASE_SECRET_KEY`; bucket auto-created privately; signed URLs for downloads |
 | **dotenv + db-fallback** | 16 | Environment loading | `config/index.ts` loads `.env`; `config/db-fallback.ts` supplies a dev-only local `DATABASE_URL` when unset and refuses that fallback in production |
 
-### Data, storage, delivery
+#### Data, storage and delivery
 
 | Technology | Role | How it is integrated |
 |---|---|---|
@@ -108,7 +113,7 @@ flowchart LR
 | **nginx** | SPA hosting | history fallback, immutable asset caching, security headers, 12 MB body, `/api/` reverse proxy |
 | **GitHub Actions** | CI | backend job: Postgres 16 service → `tsc --noEmit` + Vitest; frontend job: `tsc --noEmit` + `vite build` |
 
-### Security / auth stack (cross-cutting)
+#### Security / auth stack (cross-cutting)
 
 | Mechanism | Integration |
 |---|---|
@@ -122,6 +127,33 @@ flowchart LR
 | **RBAC** | `requireRole(...)` middleware + `AccessControlService` (the single authority for complaint visibility) |
 | **Audit chain** | `AuditService` writes `hash = SHA256(previousHash + frozen canonical payload)` with a monotonic `sequence`; serialized in-process writers |
 | **Input hardening** | Zod everywhere; central error envelope; helmet; CORS allow-list; rate limits |
+
+#### Development, test and delivery tooling
+
+| Technology | Version | Role | How it is integrated |
+|---|---|---|---|
+| **npm workspaces** | npm 9+ | Monorepo package management | root `package.json` defines `backend` + `frontend`; one install, scripts target workspaces with `--workspace` |
+| **concurrently** | 8.2 | Dev-process orchestration | root `npm run dev` starts the API watcher and Vite together |
+| **tsx** | 4.7 | TypeScript execution/watch | backend development runtime (`tsx watch src/index.ts`); production uses `tsc` |
+| **ESLint + @typescript-eslint** | 8.57 / 7.1 | Static analysis | workspace `lint` scripts; TypeScript parser/plugin |
+| **Vitest** | 1.3 | Unit + integration test runner | `backend/vitest.config.ts`; `buildApp()` + Fastify `inject()`; global setup resets/seeds the test DB |
+| **Playwright** | 1.64 | Browser E2E runner | `tests/e2e/playwright.config.ts`; boots API `:3100` + Vite `:5177` against an isolated E2E DB; Chromium |
+| **Prisma CLI** | 5.10 | Schema generation, push, migrate, seed | invoked through backend/root `db:*` scripts; generated client consumed by all services |
+| **PostCSS + Autoprefixer** | 8.4 / 10.4 | CSS post-processing | Vite pipeline over `frontend/src/index.css`; no CSS framework |
+| **Python smoke harness** | Python 3 | Live API verification | external 38-check script run against the dev stack (auth, RBAC, complaints, evidence, audit) |
+| **Supabase CLI / local stack** | optional | Local Supabase services | `supabase/config.toml` defines Postgres/Storage for optional local use; Prisma retains schema ownership |
+
+#### Integration seams
+
+| Seam | Contract | Implementation |
+|---|---|---|
+| SPA → API | REST/JSON `{ success, data \| error }`, Bearer JWT | Axios instance in `api/client.ts`; Vite proxy in dev, nginx proxy in production; one refresh-and-retry on 401 |
+| API → database | Prisma Client + PostgreSQL | `prisma/schema.prisma` is the schema source; services share the Prisma client; transactions for multi-row workflow writes |
+| API → evidence store | driver-agnostic storage API | `services/storage.ts` selects `local`, `s3`, or `supabase`; callers only use upload/download/signed-URL/delete |
+| Request → domain | Zod-validated DTO | route parses request → calls one service method; no business logic in routes |
+| Authentication → authorization | access token claims + DB scope | `authenticate` resolves the user; `requireRole` and `requireComplaintAccess` delegate to `AccessControlService` |
+| Domain events → audit/notifications/trust | one-way downstream calls | complaint service writes status history, then audit; notification and trust services consume the same event data |
+| Code → CI | typecheck + tests + build | GitHub Actions runs backend and frontend jobs on every push; the same commands are available locally |
 
 ### 1.3 Runtime wiring (bootstrap order)
 
@@ -386,7 +418,7 @@ multi-tenancy, SSO, external antivirus provisioning (hook only), and Supabase Au
 
 Verification references are the suites in §1.9. `smoke` = 38-check API run.
 
-### Identity and access
+#### Identity and access
 
 | ID | Requirement | Primary module | Verified by |
 |---|---|---|---|
@@ -398,7 +430,7 @@ Verification references are the suites in §1.9. `smoke` = 38-check API run.
 | FR-06 | Exactly five roles; every route enforces role/ownership server-side; the frontend performs no access decisions | RBAC middleware + AccessControlService | `rbac.spec.ts` (role × endpoint matrix) |
 | FR-07 | Main Admin manages users (create/edit/deactivate) and roles; role changes sync profile scope (college/department) | Admin | smoke, `rbac.spec.ts` |
 
-### Complaints
+#### Complaints
 
 | ID | Requirement | Primary module | Verified by |
 |---|---|---|---|
@@ -414,7 +446,7 @@ Verification references are the suites in §1.9. `smoke` = 38-check API run.
 | FR-17 | Messaging on verified complaints; participants only; system notices; anonymous blocked | Message service | smoke, `anonymous.spec.ts` |
 | FR-18 | Notifications emitted on submission/assignment/status/info/escalation/resolution/feedback events | Notification service | lifecycle suite, smoke |
 
-### Evidence and trust
+#### Evidence and trust
 
 | ID | Requirement | Primary module | Verified by |
 |---|---|---|---|
@@ -423,7 +455,7 @@ Verification references are the suites in §1.9. `smoke` = 38-check API run.
 | FR-21 | Evidence verification and deletion by authorized roles; deletion audited and reflected in trust score | Evidence | `evidence.spec.ts`, smoke |
 | FR-22 | Trust score 0–100 with factors and `PENDING` semantics; recomputed on evidence/assessment/status changes | Trust-score service | smoke, lifecycle suite |
 
-### Oversight, audit and administration
+#### Oversight, audit and administration
 
 | ID | Requirement | Primary module | Verified by |
 |---|---|---|---|
