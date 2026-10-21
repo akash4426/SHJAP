@@ -131,6 +131,12 @@ export const notificationsApi = {
   markAllRead: () => api.patch('/notifications/read-all'),
 };
 
+// ─── Public metadata (no sensitive fields) ──────────────────
+export const publicApi = {
+  listCategories: () => api.get('/public/categories'),
+  listDepartments: () => api.get('/public/departments'),
+};
+
 // ─── Admin ──────────────────────────────────────────────────
 export const adminApi = {
   listUsers: (params?: object) => api.get('/admin/users', { params }),

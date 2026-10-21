@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import toast from 'react-hot-toast';
-import { complaintsApi, adminApi, evidenceApi } from '../../api/client';
+import { complaintsApi, publicApi, evidenceApi } from '../../api/client';
 import { anonymousApi } from '../../api/client';
 import { Shield, Upload, X, FileText, AlertTriangle, Eye, ChevronRight, ChevronLeft } from 'lucide-react';
 import { Spinner } from '../../components/shared';
@@ -29,8 +29,8 @@ export function LodgeComplaintPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [submittedComplaint, setSubmittedComplaint] = useState<{ id?: string; trackingId: string; complaintNumber: string; isAnonymous: boolean } | null>(null);
 
-  const { data: catData } = useQuery({ queryKey: ['categories'], queryFn: () => adminApi.listCategories() });
-  const { data: deptData } = useQuery({ queryKey: ['departments-public'], queryFn: () => adminApi.listDepartments() });
+  const { data: catData } = useQuery({ queryKey: ['categories-public'], queryFn: () => publicApi.listCategories() });
+  const { data: deptData } = useQuery({ queryKey: ['departments-public'], queryFn: () => publicApi.listDepartments() });
 
   const categories = catData?.data?.data ?? [];
   const departments = deptData?.data?.data ?? [];

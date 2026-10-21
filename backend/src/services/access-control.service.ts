@@ -26,7 +26,8 @@ interface ComplaintScope {
  *
  * Scope rules (mirrors the specification):
  * - STUDENT: only their own verified complaints (never anonymous others).
- * - DEPARTMENT_ADMIN: complaints assigned to them, or belonging to their department.
+ * - DEPARTMENT_ADMIN: complaints assigned to them, belonging to their department,
+ *   or still unassigned (shared intake queue for triage).
  * - COLLEGE_ADMIN: complaints within departments of their college.
  * - UNIVERSITY_ADMIN: escalated / resolved / closed complaints university-wide,
  *   plus anything explicitly assigned to them.
@@ -57,6 +58,10 @@ export class AccessControlService {
           if (complaint.submittedById === user.id && !complaint.isAnonymous) return true;
           break;
         case 'DEPARTMENT_ADMIN':
+          // Unassigned complaints are visible to every department admin so
+          // they can be triaged; once routed, only the owning department or
+          // the assigned administrator can open them.
+          if (!complaint.departmentId) return true;
           if (scope.departmentId && complaint.departmentId === scope.departmentId) return true;
           if (complaint.assignedToId === user.id) return true;
           break;
@@ -124,8 +129,16 @@ export class AccessControlService {
 
     if (user.roles.includes('DEPARTMENT_ADMIN') || user.roles.includes('COLLEGE_ADMIN')) {
       const scope = await this.getAdminScope(user.id, user.roles[0]);
-      if (user.roles.includes('DEPARTMENT_ADMIN') && scope.departmentId) {
-        scopeConditions.push({ OR: [{ departmentId: scope.departmentId }, { assignedToId: user.id }] });
+      if (user.roles.includes('DEPARTMENT_ADMIN')) {
+        scopeConditions.push({
+          OR: [
+            ...(scope.departmentId ? [{ departmentId: scope.departmentId }] : []),
+            { assignedToId: user.id },
+            // Shared intake queue: complaints with no department yet must be
+            // visible to department admins regardless of the classifier.
+            { departmentId: null },
+          ],
+        });
       } else if (user.roles.includes('COLLEGE_ADMIN') && scope.collegeId) {
         scopeConditions.push({
           OR: [

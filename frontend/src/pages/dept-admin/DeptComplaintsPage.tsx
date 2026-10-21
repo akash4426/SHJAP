@@ -21,6 +21,7 @@ export function DeptComplaintsPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['complaints', 'dept', page, search, statusFilter, priorityFilter],
     queryFn: () => complaintsApi.list({ page, limit: 15, search: search || undefined, status: statusFilter || undefined, priority: priorityFilter || undefined }),
+    refetchInterval: 20_000,
   });
 
   const { data: usersData } = useQuery({
@@ -100,9 +101,12 @@ export function DeptComplaintsPage() {
                     <td><TrustScoreBadge trustScore={c.trustScore} /></td>
                     <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
                       {c.assignedTo ? `${c.assignedTo.firstName} ${c.assignedTo.lastName}` : (
-                        <button onClick={() => setAssignModal({ complaintId: c.id })} className="btn btn-ghost btn-sm" style={{ color: 'var(--color-primary)' }}>
-                          <UserCheck size={14} /> Assign
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <span style={{ color: 'var(--color-warning)', fontSize: '0.75rem' }}>Unassigned</span>
+                          <button onClick={() => setAssignModal({ complaintId: c.id })} className="btn btn-ghost btn-sm" style={{ color: 'var(--color-primary)' }}>
+                            <UserCheck size={14} /> Assign
+                          </button>
+                        </div>
                       )}
                     </td>
                     <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{new Date(c.createdAt).toLocaleDateString()}</td>

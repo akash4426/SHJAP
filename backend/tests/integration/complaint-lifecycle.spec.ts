@@ -41,6 +41,70 @@ describe('complaint lifecycle (integration)', () => {
     expect(db?.trackingId).toBeTruthy();
   });
 
+  it('honors the submitter-selected category and department', async () => {
+    const category = await prisma.complaintCategory.findUnique({ where: { code: 'ACADEMIC_ASSESSMENT' } });
+    const department = await prisma.department.findUnique({ where: { code: 'ACADEMICS' } });
+    expect(category?.id).toBeTruthy();
+    expect(department?.id).toBeTruthy();
+
+    // Metadata for the student submission form is public and active-only;
+    // it must not require an admin role (the selects used to be empty).
+    const publicCategories = await req('GET', '/api/public/categories');
+    expect(publicCategories.status).toBe(200);
+    expect(publicCategories.body.data.some((c: any) => c.code === 'ACADEMIC_ASSESSMENT')).toBe(true);
+    const publicDepartments = await req('GET', '/api/public/departments');
+    expect(publicDepartments.status).toBe(200);
+    expect(publicDepartments.body.data.some((d: any) => d.code === 'ACADEMICS')).toBe(true);
+
+    const { status, body } = await req('POST', '/api/complaints', {
+      payload: {
+        title: `Explicit routing check ${Date.now()}`,
+        description:
+          'This complaint is submitted with an explicitly selected category and department; routing must honor both instead of relying on keyword detection.',
+        submissionMode: 'VERIFIED',
+        priority: 'MEDIUM',
+        categoryId: category!.id,
+        departmentId: department!.id,
+      },
+      token: student.token,
+    });
+
+    expect(status).toBe(201);
+    expect(body.data.categoryId).toBe(category!.id);
+    expect(body.data.departmentId).toBe(department!.id);
+    expect(['ASSIGNED', 'CATEGORIZED']).toContain(body.data.status);
+
+    // The Academic Affairs admin must see it in their queue immediately.
+    const list = await req('GET', '/api/complaints?limit=100', { token: deptToken });
+    expect(list.status).toBe(200);
+    expect(list.body.data.some((c: any) => c.id === body.data.id)).toBe(true);
+  });
+
+  it('exposes unassigned complaints to department admins as an intake queue', async () => {
+    const { status, body } = await req('POST', '/api/complaints', {
+      payload: {
+        title: `Unclassified intake check ${Date.now()} qwerty`,
+        description:
+          'This description intentionally avoids every classifier keyword so the complaint cannot be routed automatically and must remain in the shared intake queue.',
+        submissionMode: 'VERIFIED',
+        priority: 'LOW',
+      },
+      token: student.token,
+    });
+
+    expect(status).toBe(201);
+    expect(body.data.departmentId).toBeNull();
+    expect(body.data.needsManualCategorization).toBe(true);
+
+    // Visibility for triage: detail access and list membership.
+    const detail = await req('GET', `/api/complaints/${body.data.id}`, { token: deptToken });
+    expect(detail.status).toBe(200);
+
+    const list = await req('GET', '/api/complaints?limit=100', { token: deptToken });
+    expect(list.status).toBe(200);
+    expect(list.body.data.some((c: any) => c.id === body.data.id)).toBe(true);
+  });
+
   it('rejects invalid state transitions and missing required fields', async () => {
     // Academic Affairs admin has no scope over this IT complaint
     const { status: oos } = await req('GET', `/api/complaints/${complaintId}`, { token: deptToken });

@@ -118,18 +118,70 @@ export class CategorizationService {
   static async categorizeAndAssign(complaintId: string): Promise<void> {
     const complaint = await prisma.complaint.findUnique({
       where: { id: complaintId },
-      select: { id: true, title: true, description: true, status: true, complaintNumber: true },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        status: true,
+        complaintNumber: true,
+        categoryId: true,
+        departmentId: true,
+      },
     });
 
     if (!complaint || complaint.status !== 'SUBMITTED') return;
 
-    const result = this.classify(complaint.title, complaint.description);
+    const explicitRouting = Boolean(complaint.categoryId || complaint.departmentId);
+    let categoryId = complaint.categoryId;
+    let departmentId = complaint.departmentId;
 
-    if (!result || result.confidence === 'AMBIGUOUS') {
-      // Manual categorization required
+    // Only classify the fields the submitter did not choose. An explicitly
+    // selected department is authoritative and must never be overwritten.
+    let result: ReturnType<typeof CategorizationService.classify> = null;
+    if (!categoryId || !departmentId) {
+      result = this.classify(complaint.title, complaint.description);
+
+      if (result && result.confidence !== 'AMBIGUOUS') {
+        if (!categoryId) {
+          const category = await prisma.complaintCategory.findFirst({
+            where: { code: result.categoryCode, isActive: true },
+            select: { id: true, departmentId: true },
+          });
+          // Never mix scopes: only take the category when its owning
+          // department matches an explicitly selected department.
+          if (category && (!departmentId || category.departmentId === departmentId)) {
+            categoryId = category.id;
+          }
+        }
+        if (!departmentId) {
+          const department = await prisma.department.findFirst({
+            where: { code: result.departmentCode, isActive: true, deletedAt: null },
+            select: { id: true },
+          });
+          departmentId = department?.id ?? null;
+        }
+      }
+    }
+
+    // A category always implies its owning department if none was provided.
+    if (categoryId && !departmentId) {
+      const category = await prisma.complaintCategory.findUnique({
+        where: { id: categoryId },
+        select: { departmentId: true },
+      });
+      departmentId = category?.departmentId ?? null;
+    }
+
+    if (!departmentId) {
+      // Unrouted: keep the complaint in the shared intake queue. Department
+      // admins can see these (departmentId = null); main/college admins are
+      // notified so they can categorize it manually.
       await prisma.complaint.update({
         where: { id: complaintId },
-        data: { needsManualCategorization: true },
+        data: {
+          categoryId: categoryId ?? null,
+          needsManualCategorization: true,
+        },
       });
 
       await prisma.complaintStatusHistory.create({
@@ -138,7 +190,7 @@ export class CategorizationService {
           previousStatus: 'SUBMITTED',
           newStatus: 'SUBMITTED',
           changedByLabel: 'System (auto-categorization)',
-          reason: 'Automatic categorization was ambiguous — manual categorization required',
+          reason: 'No category/department matched — placed in the intake queue for manual categorization',
         },
       });
 
@@ -146,10 +198,9 @@ export class CategorizationService {
         action: 'COMPLAINT_CREATED',
         entityType: 'Complaint',
         entityId: complaintId,
-        newValue: { autoCategorization: 'AMBIGUOUS', flagged: 'needsManualCategorization' },
+        newValue: { autoCategorization: 'UNMATCHED', flagged: 'needsManualCategorization' },
       });
 
-      // Notify authorized administrators to categorize manually
       const mainAdmins = await prisma.user.findMany({
         where: { roles: { has: 'MAIN_ADMIN' }, isActive: true, deletedAt: null },
         select: { id: true },
@@ -169,43 +220,34 @@ export class CategorizationService {
         });
       }
 
-      categorizerLogger.warn({ complaintId }, 'Ambiguous complaint flagged for manual categorization');
+      categorizerLogger.warn({ complaintId }, 'Unmatched complaint placed in intake queue');
       return;
     }
 
-    const category = await prisma.complaintCategory.findFirst({
-      where: { code: result.categoryCode, isActive: true },
+    // Find an active department administrator of the target department.
+    const admin = await prisma.user.findFirst({
+      where: {
+        roles: { has: 'DEPARTMENT_ADMIN' },
+        isActive: true,
+        deletedAt: null,
+        adminProfile: { departmentId },
+      },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
     });
-
-    const department = await prisma.department.findFirst({
-      where: { code: result.departmentCode, isActive: true },
-    });
-
-    // Find an active department administrator of that department
-    let assignedAdminId: string | null = null;
-    if (department) {
-      const admin = await prisma.user.findFirst({
-        where: {
-          roles: { has: 'DEPARTMENT_ADMIN' },
-          isActive: true,
-          deletedAt: null,
-          adminProfile: { departmentId: department.id },
-        },
-        select: { id: true },
-      });
-      assignedAdminId = admin?.id ?? null;
-    }
-
+    const assignedAdminId = admin?.id ?? null;
     const newStatus: 'ASSIGNED' | 'CATEGORIZED' = assignedAdminId ? 'ASSIGNED' : 'CATEGORIZED';
+    const needsManualCategorization = !categoryId;
 
     await prisma.$transaction([
       prisma.complaint.update({
         where: { id: complaintId },
         data: {
-          categoryId: category?.id ?? null,
-          departmentId: department?.id ?? null,
+          categoryId: categoryId ?? null,
+          departmentId,
           assignedToId: assignedAdminId,
           status: newStatus,
+          needsManualCategorization,
         },
       }),
       prisma.complaintStatusHistory.create({
@@ -214,8 +256,10 @@ export class CategorizationService {
           previousStatus: 'SUBMITTED',
           newStatus,
           changedById: assignedAdminId ?? null,
-          changedByLabel: assignedAdminId ? undefined : 'System (auto-categorization)',
-          reason: `Auto-categorized as ${result.categoryCode} with ${result.confidence} confidence${assignedAdminId ? ' and assigned' : ''}`,
+          changedByLabel: assignedAdminId ? undefined : 'System (routing)',
+          reason: explicitRouting
+            ? `Routed using the submitter-selected ${complaint.categoryId ? 'category' : 'department'}${assignedAdminId ? ' and assigned' : ''}`
+            : `Auto-categorized as ${result?.categoryCode ?? 'unknown'} with ${result?.confidence ?? 'LOW'} confidence${assignedAdminId ? ' and assigned' : ''}`,
         },
       }),
     ]);
@@ -225,10 +269,11 @@ export class CategorizationService {
       entityType: 'Complaint',
       entityId: complaintId,
       newValue: {
-        autoCategorized: true,
-        categoryCode: result.categoryCode,
-        departmentCode: result.departmentCode,
-        confidence: result.confidence,
+        autoCategorized: !explicitRouting,
+        routingSource: explicitRouting ? 'SUBMITTER_SELECTION' : 'CLASSIFIER',
+        categoryId,
+        departmentId,
+        confidence: result?.confidence ?? null,
         assignedToId: assignedAdminId,
       },
     });
@@ -237,6 +282,9 @@ export class CategorizationService {
       await NotificationService.notifyAssignment(assignedAdminId, complaintId, complaint.complaintNumber);
     }
 
-    categorizerLogger.info({ complaintId, ...result }, 'Complaint auto-categorized');
+    categorizerLogger.info(
+      { complaintId, departmentId, categoryId, explicitRouting, assignedAdminId },
+      explicitRouting ? 'Complaint routed using submitter selection' : 'Complaint auto-categorized'
+    );
   }
 }

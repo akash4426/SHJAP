@@ -6,6 +6,7 @@ import { CategorizationService } from './categorization.service.js';
 import { AccessControlService } from './access-control.service.js';
 import { generateComplaintNumber, generateTrackingId, sanitizeText } from '../utils/crypto.js';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../utils/errors.js';
+import { logger } from '../utils/logger.js';
 import { ComplaintStatus, ComplaintPriority, SubmissionMode, UserRole, Complaint } from '@prisma/client';
 
 export interface CreateComplaintDto {
@@ -110,6 +111,31 @@ export class ComplaintService {
     const trackingId = generateTrackingId();
     const isAnonymous = dto.submissionMode === 'ANONYMOUS';
 
+    // Honor an explicit category/department chosen by the submitter. These
+    // used to be silently dropped, leaving the complaint unrouted unless the
+    // keyword classifier happened to match.
+    let categoryId = dto.categoryId ?? null;
+    let departmentId = dto.departmentId ?? null;
+
+    if (categoryId) {
+      const category = await prisma.complaintCategory.findFirst({
+        where: { id: categoryId, isActive: true },
+        select: { id: true, departmentId: true },
+      });
+      if (!category) throw new ValidationError('Selected category is invalid or inactive');
+      categoryId = category.id;
+      departmentId = departmentId ?? category.departmentId;
+    }
+
+    if (departmentId) {
+      const department = await prisma.department.findFirst({
+        where: { id: departmentId, isActive: true, deletedAt: null },
+        select: { id: true },
+      });
+      if (!department) throw new ValidationError('Selected department is invalid or inactive');
+      departmentId = department.id;
+    }
+
     const complaint = await prisma.complaint.create({
       data: {
         complaintNumber,
@@ -117,6 +143,8 @@ export class ComplaintService {
         title: sanitizeText(dto.title),
         description: sanitizeText(dto.description),
         priority: dto.priority ?? 'MEDIUM',
+        categoryId: categoryId ?? undefined,
+        departmentId: departmentId ?? undefined,
         location: dto.location ? sanitizeText(dto.location) : undefined,
         additionalInfo: dto.additionalInfo ? sanitizeText(dto.additionalInfo) : undefined,
         submissionMode: dto.submissionMode,
@@ -153,28 +181,28 @@ export class ComplaintService {
       await NotificationService.notifyComplaintSubmitted(dto.submittedById, complaint.id, complaintNumber);
     }
 
-    // Auto-categorize + assign (deterministic rule-based classifier),
-    // then compute trust score and notify the assigned department admin.
-    setImmediate(() => {
-      CategorizationService.categorizeAndAssign(complaint.id)
-        .then(() => {
-          TrustScoreService.calculate(complaint.id);
-          return prisma.complaint.findUnique({
-            where: { id: complaint.id },
-            select: { assignedToId: true, complaintNumber: true },
-          });
-        })
-        .then((c) => {
-          if (c?.assignedToId) {
-            NotificationService.notifyAssignment(c.assignedToId, complaint.id, c.complaintNumber);
-          }
-        })
-        .catch((err) => {
-          import('../utils/logger.js').then(({ logger }) => logger.error({ err }, 'Auto-categorization failed'));
-        });
+    // Route synchronously (explicit selection first, then the deterministic
+    // classifier). Awaiting here guarantees that the moment the response is
+    // returned the complaint is already visible in the correct admin queue —
+    // the previous fire-and-forget setImmediate left a race and could strand
+    // complaints with no department after a restart.
+    try {
+      await CategorizationService.categorizeAndAssign(complaint.id);
+      await TrustScoreService.calculate(complaint.id);
+    } catch (err) {
+      logger.error({ err, complaintId: complaint.id }, 'Complaint routing failed');
+    }
+
+    const routed = await prisma.complaint.findUnique({
+      where: { id: complaint.id },
+      include: {
+        category: { select: { name: true, code: true } },
+        department: { select: { name: true, code: true, collegeId: true } },
+        submittedBy: { select: { id: true, firstName: true, lastName: true, email: true } },
+      },
     });
 
-    return complaint;
+    return routed ?? complaint;
   }
 
   // ─── Read ──────────────────────────────────────────────────────────────────
@@ -818,7 +846,11 @@ export class ComplaintService {
   static async deptDashboard(userId: string, departmentId?: string | null) {
     const where: Record<string, unknown> = {
       deletedAt: null,
-      OR: [{ assignedToId: userId }, ...(departmentId ? [{ departmentId }] : [])],
+      OR: [
+        { assignedToId: userId },
+        ...(departmentId ? [{ departmentId }] : []),
+        { departmentId: null }, // shared intake queue
+      ],
     };
 
     const complaints = await prisma.complaint.findMany({

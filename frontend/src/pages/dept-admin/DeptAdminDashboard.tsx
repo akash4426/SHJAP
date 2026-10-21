@@ -15,6 +15,9 @@ export function DeptAdminDashboard() {
   const { data, isLoading } = useQuery({
     queryKey: ['complaints', 'dept-admin'],
     queryFn: () => complaintsApi.list({ limit: 100 }),
+    // New complaints are routed by the API; poll so the dashboard reflects
+    // them without requiring a manual page reload.
+    refetchInterval: 20_000,
   });
 
   const complaints: Complaint[] = data?.data?.data ?? [];

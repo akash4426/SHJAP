@@ -13,6 +13,7 @@ import { logger } from './utils/logger.js';
 
 import { authRoutes } from './routes/auth.routes.js';
 import { complaintRoutes, anonymousRoutes } from './routes/complaint.routes.js';
+import { publicRoutes } from './routes/public.routes.js';
 import { evidenceRoutes } from './routes/evidence.routes.js';
 import { notificationRoutes } from './routes/notification.routes.js';
 import { adminRoutes, auditRoutes } from './routes/admin.routes.js';
@@ -88,6 +89,7 @@ async function buildApp() {
   });
 
   // API Routes
+  await app.register(publicRoutes, { prefix: '/api/public' });
   await app.register(complaintRoutes, { prefix: '/api/complaints' });
   await app.register(evidenceRoutes, { prefix: '/api/complaints' });
   await app.register(anonymousRoutes, { prefix: '/api/anonymous' });
