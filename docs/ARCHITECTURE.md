@@ -14,6 +14,7 @@ backend/src
 │   ├── complaint.routes.ts  complaint lifecycle incl. state machine routes; anonymous routes
 │   ├── evidence.routes.ts   multipart upload with content validation; verify/delete/download
 │   ├── notification.routes.ts
+│   ├── public.routes.ts     unauthenticated active-only categories/departments for complaint forms
 │   ├── admin.routes.ts      users/roles/permissions/departments/colleges/categories/settings/security + audit feed/verify
 │   └── admin.routes.analytics.ts  scoped analytics (overview/departments/categories/trust/resolution/satisfaction/escalations)
 ├── services/
@@ -21,8 +22,10 @@ backend/src
 │   │                        TOTP MFA, password reset tokens, dev credential seeding
 │   ├── complaint.service.ts central state machine (ALLOWED_TRANSITIONS + TRANSITION_ROLES),
 │   │                        create/list/get/update/lifecycle transitions, dashboards
-│   ├── access-control.service.ts  the only place complaint visibility is decided (scope filters)
-│   ├── categorization.service.ts  rule-based classifier (occurrence-weighted titles, ambiguity flagging)
+│   ├── access-control.service.ts  the only place complaint visibility is decided (scope filters,
+│   │                              shared intake queue for unassigned complaints)
+│   ├── categorization.service.ts  honors explicit category/department; rule-based classifier
+│   │                              (occurrence-weighted titles, ambiguity flagging); unmatched → intake
 │   ├── trust-score.service.ts     0–100 score with PENDING semantics + component factors
 │   ├── audit.service.ts     append-only hash chain writer/verifier (serialized writers)
 │   ├── audit-query.service.ts     admin audit feed queries

@@ -13,7 +13,7 @@ Verification status refers to the automated suites: 97 unit/integration (Vitest)
 | 3 | Messaging and evidence upload disabled for anonymous complaints to prevent identification | `POST /messages`, `POST /evidence` guards | `anonymous.spec.ts` |
 | 4 | Every status change records an audit entry and a notification | `ComplaintService.updateStatus` central guard → AuditService + NotificationService | `complaint-lifecycle.spec.ts` (history ≥ 3, notifications on resolve) |
 | 5 | Tamper-evident append-only audit chain (`SHA256(prev+payload)`, `sequence` ordered, serialized writers) | `AuditService`, `AuditLog` columns | `audit-chain.spec.ts` (tamper detection reports exact sequence), smoke #12 |
-| 6 | RBAC: 5 roles; backend authorization on every route; frontend performs no access decisions | `requireRole`, `requireComplaintAccess`, `AccessControlService` scope filters | `rbac.spec.ts` matrix |
+| 6 | RBAC: 5 roles; backend authorization on every route; frontend performs no access decisions; unassigned complaints are the shared department-admin intake queue | `requireRole`, `requireComplaintAccess`, `AccessControlService` scope filters | `rbac.spec.ts` matrix, `complaint-lifecycle.spec.ts` intake test |
 | 7 | State machine transitions validated with role checks + required reasons/details | `ALLOWED_TRANSITIONS`/`TRANSITION_ROLES` | `complaint-lifecycle.spec.ts` (invalid transitions 400, escalation reason min length) |
 | 8 | Trust Score 0–100 with PENDING when evidence/process data is insufficient; recompute on evidence changes | `TrustScoreService.calculate` on create/evidence/assessment/update | smoke #11, evidence + lifecycle suites |
 | 9 | Evidence stored privately (local driver default, S3 optional), authorized-only downloads, validated content | `services/storage.ts`, `evidence.routes.ts` | `evidence-scan.spec.ts` (magic bytes/executables), `evidence.spec.ts` (extension/MIME agreement, path leaks absent), smoke #21–26 |
@@ -39,11 +39,14 @@ Verification status refers to the automated suites: 97 unit/integration (Vitest)
 
 ## UC-03 — Auto-categorization & department assignment
 
-- Rule-based classifier with occurrence-weighted title boost, family matching,
-  exact-tie → `AMBIGUOUS` → surfaced for manual categorization; deterministic
-  assignee fallback to the department administrator.
+- Submitter-selected category/department is authoritative and routed
+  synchronously; the rule-based classifier only fills the missing fields
+  (occurrence-weighted title boost, family matching). Exact-tie/no-match rows
+  stay unassigned and appear in the shared department-admin intake queue, with
+  notifications to main/college admins for manual categorization.
 - **Tests**: `categorization.spec.ts` (8 unit checks incl. ambiguity + no-match),
-  smoke #7/#18 (auto-assignment to IT / Academic Affairs), lifecycle + rbac.
+  `complaint-lifecycle.spec.ts` (explicit routing + intake visibility),
+  smoke #7/#18 (auto-assignment to IT / Academic Affairs), rbac.
 
 ## UC-04 — Department admin reviews & investigates
 
