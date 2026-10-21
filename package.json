@@ -18,6 +18,8 @@
     "db:push": "npm run db:push --workspace=backend",
     "db:migrate": "npm run db:migrate --workspace=backend",
     "db:seed": "npm run db:seed --workspace=backend",
+    "db:setup": "npm run db:setup --workspace=backend",
+    "db:deploy": "npm run db:deploy --workspace=backend",
     "test": "npm run test --workspace=backend && npm run e2e --workspace=backend",
     "test:unit": "npm run test --workspace=backend",
     "test:e2e": "npm run e2e --workspace=backend",
