@@ -124,13 +124,21 @@ offline development.
 
    | Use case | Connection string |
    |---|---|
-   | Long-running API (recommended) | `postgresql://postgres:PASSWORD@db.PROJECT_REF.supabase.co:5432/postgres?sslmode=require` |
-   | Supavisor session pooler | `postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require` |
-   | Supavisor transaction pooler (serverless only) | same host, port `6543`, add `?pgbouncer=true&connection_limit=1` |
+   | **Supavisor session pooler (recommended; IPv4)** | `postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require` |
+   | Direct connection (IPv6-only) | `postgresql://postgres:PASSWORD@db.PROJECT_REF.supabase.co:5432/postgres?sslmode=require` |
+   | Supavisor transaction pooler (serverless only) | same pooler host, port `6543`, add `?pgbouncer=true&connection_limit=1` |
 
    ```bash
-   DATABASE_URL="postgresql://postgres:...@db.PROJECT_REF.supabase.co:5432/postgres?sslmode=require"
+   DATABASE_URL="postgresql://postgres.PROJECT_REF:...@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require"
    ```
+
+   > **`P1001` / “Can’t reach database server”.** The direct
+   > `db.PROJECT_REF.supabase.co` hostname is IPv6-only. If the host or CI
+   > network has no IPv6 route, Prisma fails before the API starts. Use the
+   > **Session Pooler** URI instead — it is IPv4, and the username must be
+   > `postgres.PROJECT_REF` (not plain `postgres`). For slow cold starts add
+   > `&connect_timeout=15&pool_timeout=15`. The pooler host’s region must match
+   > the project region shown in the Supabase dashboard.
 
 3. **Storage** — *Project Settings → API* gives you the URL and keys:
 

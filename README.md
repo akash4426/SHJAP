@@ -105,7 +105,7 @@ flowchart LR
 | Technology | Role | How it is integrated |
 |---|---|---|
 | **Prisma schema** | Data model owner | 26 models / 7 enums; `prisma db push` (dev), `prisma migrate` (production workflow), `prisma db seed` |
-| **Supabase Postgres** | Managed database | simply `DATABASE_URL` (direct IPv6 or Session pooler URI; SSL required). Prisma owns the schema — Supabase migrations/seed are disabled in `supabase/config.toml` |
+| **Supabase Postgres** | Managed database | simply `DATABASE_URL` — **Session Pooler (IPv4) recommended**; the direct `db.*` host is IPv6-only; SSL required. Prisma owns the schema — Supabase migrations/seed are disabled in `supabase/config.toml` |
 | **Supabase Storage** | Managed evidence store | native driver via secret key (`STORAGE_DRIVER=supabase`) or the S3 protocol (`STORAGE_DRIVER=s3`); private `shjap-evidence` bucket, 10 MiB, MIME whitelist (also defined in `supabase/config.toml` for the optional local stack) |
 | **Supabase Auth** | **not used** | bespoke Argon2id + rotating JWT + TOTP MFA is a project requirement; `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_JWKS_URL` are accepted for completeness but not consumed |
 | **Docker** | Packaging | `backend/Dockerfile`, `frontend/Dockerfile` (multi-stage build → nginx) |
@@ -299,7 +299,7 @@ disabled).
 
 | Variable | Purpose / default |
 |---|---|
-| `DATABASE_URL` | PostgreSQL URI (Supabase direct or Session pooler) |
+| `DATABASE_URL` | PostgreSQL URI (Supabase Session Pooler/IPv4 or direct/IPv6) |
 | `JWT_SECRET`, `JWT_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN`, `MFA_ISSUER` | token signing + TTLs + TOTP issuer |
 | `PORT`, `HOST`, `NODE_ENV`, `FRONTEND_URL` | server + CORS origin |
 | `STORAGE_DRIVER` | `local` \| `s3` \| `supabase` (default `local`) |
@@ -317,12 +317,15 @@ disabled).
 | `TEST_DATABASE_URL`, `E2E_DATABASE_URL` | test/E2E databases (tooling) |
 
 **Supabase in one paragraph.** Point `DATABASE_URL` at the Supabase Postgres URI
-(direct connection or Session pooler; percent-encode special characters in the
-password). For evidence set `STORAGE_DRIVER="supabase"`, `SUPABASE_URL`, and
-`SUPABASE_SECRET_KEY` — the private bucket is created on first upload and
-downloads use short-lived signed URLs. The S3-protocol alternative uses
-`STORAGE_DRIVER="s3"` with the project's S3 endpoint/keys. Supabase **Auth is not
-used** by design. Full guide: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §8.
+(**Session Pooler** recommended; use direct only on IPv6-capable networks;
+percent-encode special characters in the password). If Prisma reports `P1001`
+or “Can’t reach database server”, the direct `db.*` host is IPv6-only — switch
+to the pooler URI with the `postgres.PROJECT_REF` username. For evidence set
+`STORAGE_DRIVER="supabase"`, `SUPABASE_URL`, and `SUPABASE_SECRET_KEY` — the
+private bucket is created on first upload and downloads use short-lived signed
+URLs. The S3-protocol alternative uses `STORAGE_DRIVER="s3"` with the project's
+S3 endpoint/keys. Supabase **Auth is not used** by design. Full guide:
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §8.
 
 ### 1.8 Running, commands and demo accounts
 
